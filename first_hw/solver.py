@@ -1,45 +1,56 @@
 import decimal
-from math import isclose, copysign
-from typing import Tuple, Callable, Optional
+from math import isclose, sqrt, copysign
+from typing import Tuple, Callable, Optional, List
 
 from first_hw.oracul import funcs
 
 
-def brent_prime(func: Callable[[float], Tuple[float, float]], a: float, b: float, eps: float = 1e-8):
+def brent_d(func: Callable[[float], Tuple[float, float]], a: float, b: float, eps: float = 1e-8):
+    max_iter = 50
     zeps = eps * 1e-3
-    max_iter = 500
 
     x = w = v = (a + b) / 2  # x is a current minimum, w is a second minimum, v is a previous w
     f, d_f = func(x)
     f_x = f_w = f_v = f
     d_x = d_w = d_v = d_f
     length_cur = length_past = b - a
-
     for _ in range(max_iter):
-        length_past_past, length_past = length_past, length_cur
-        # Trying to perform parabolic step
-        u_1 = parabolic_secant(a, b, x, w, d_x, d_w, eps, length_past_past)
-        u_2 = parabolic_secant(a, b, x, v, d_x, d_v, eps, length_past_past)
-        if u_1 is not None and u_2 is not None:
-            u = u_1 if abs(u_1 - x) < abs(u_2 - x) else u_2
-        elif u_1 is not None or u_2 is not None:
-            u = u_1 if u_1 is not None else u_2
-        else:
-            # parabolic is failed, performing bisect
-            if d_x > 0:
-                u = (a + x) / 2
-            else:
-                u = (b + x) / 2
+        # if isclose(d_x, 0.0):
+        #     return x
+        x_med = (a + b) / 2
+        tol1 = eps * abs(x) + zeps
+        tol2 = 2 * tol1
+        if abs(x - x_med) <= (tol2 - (b - a) / 2):
+            return x
 
-        # if abs(u - argmin) < eps:
-        #     u = argmin + copysign(eps, u - argmin)  # update by at least epsilon
+        length_past_past, length_past = length_past, length_cur
+
+        # Trying to preform a parabola and cubic minimization
+        us = [
+            parabola_minima_d(x, w, d_x, d_w),
+            parabola_minima_d(x, v, d_x, d_v),
+            cubic_minima(x, w, f_x, f_w, d_x, d_w),
+            cubic_minima(x, v, f_x, f_v, d_x, d_v)
+        ]
+        u = choose_optimum(x, a, b, eps, us)
+
+        if u is None:
+            # Super-linear methods fail, perform bisect
+            u = (a + x) / 2 if d_x > 0 else (b + x) / 2
+
         if abs(u - x) < eps:
-            x = u
-            break
+            return x
+
+        if abs(u - x) < tol1:
+            u = x + copysign(tol1, u - x)
+            f_u, d_u = func(u)
+            if f_u > f_x:
+                return x
+        else:
+            f_u, d_u = func(u)
 
         # update the state
         length_cur = abs(u - x)
-        f_u, d_u = func(u)
         if f_u < f_x:
             if u >= x:
                 a = x
@@ -65,32 +76,73 @@ def brent_prime(func: Callable[[float], Tuple[float, float]], a: float, b: float
     return x
 
 
-def parabolic_secant(a: float, b: float, x_1: float, x_2: float, f_x_1: float, f_x_2: float, eps: float, length: float) -> Optional[float]:
+def parabola_minima(x_1: float, x_2: float, x_3: float, f_1: float, f_2: float, f_3: float) -> Optional[float]:
+    if f_1 < f_2:
+        x_1, x_2 = x_2, x_1
+        f_1, f_2 = f_2, f_1
+    if f_3 < f_2:
+        x_3, x_2 = x_2, x_3
+        f_3, f_2 = f_2, f_3
+    if not (isclose(x_1, x_2) or isclose(x_2, x_3) or isclose(x_1, x_3) or
+            isclose(f_1, f_2) or isclose(f_2, f_3) or isclose(f_1, f_3)):
+        u = (x_2 -
+             ((x_2 - x_1) ** 2 * (f_2 - f_3) - (x_2 - x_3) ** 2 * (f_2 - f_1)) /
+             (2 * (x_2 - x_1) * (f_2 - f_3) - (x_2 - x_3) * (f_2 - f_1))
+             )
+        if not (isclose(x_1, u) or isclose(x_2, u) or isclose(x_3, u)):
+            return u
+
+
+def parabola_minima_d(x_1: float, x_2: float, d_1: float, d_2: float) -> Optional[float]:
     if x_1 > x_2:
         x_1, x_2 = x_2, x_1
-        f_x_1, f_x_2 = f_x_2, f_x_1
-    if not isclose(x_1, x_2) and not isclose(f_x_1, f_x_2):
-        u = -f_x_1 * (x_2 - x_1) / (f_x_2 - f_x_1) + x_1
-        if a + eps < u < b - eps and abs(u - x_1) < length / 2 and not isclose(x_1, u) and not isclose(x_2, u):
+        d_1, d_2 = d_2, d_1
+    if not isclose(x_1, x_2) and not isclose(d_1, d_2):
+        u = -d_1 * (x_2 - x_1) / (d_2 - d_1) + x_1
+        if not isclose(x_1, u) and not isclose(x_2, u):
             return u
+
+
+def cubic_minima(x_1: float, x_2: float, f_1: float, f_2: float, d_1: float, d_2: float) -> Optional[float]:
+    if x_1 > x_2:
+        x_1, x_2 = x_2, x_1
+        f_1, f_2 = f_2, f_1
+        d_1, d_2 = d_2, d_1
+    if not isclose(x_1, x_2) and not isclose(f_1, f_2) and not isclose(d_1, d_2):
+        h = x_2 - x_1
+        F = f_2 - f_1
+        G = (d_2 - d_1) * h
+        c = G - 2 * (F - d_1 * h)
+        under_root = (G - 3 * c) ** 2 - 12 * c * d_1 * h
+        if under_root >= 0:
+            u = -2 * d_1 * h / ((G - 3 * c) + sqrt(under_root) + 1e-8)
+            if not isclose(x_1, u) and not isclose(x_2, u):
+                return u
+
+
+def choose_optimum(x: float, a: float, b: float, eps: float, us: List[Optional[float]]) -> Optional[float]:
+    us = [u for u in us if u is not None and a + eps < u < b - eps]
+    return min(us, key=lambda u: abs(x - u)) if us else None
 
 
 def main():
     eps = 1e-8
-    total_score = 0
+    total_score_1 = 0
+    total_score_2 = 0
     fails_number = 0
     for no, func, (a, b), x_target in funcs:
-        x_predicted = brent_prime(func, a, b, eps)
+        x_predicted = brent_d(func, a, b, eps)
         if x_target is not None:
             if abs(x_target - x_predicted) < 10 ** max(decimal.Decimal(str(x_target)).as_tuple().exponent, -8):
                 print(f"#{no} -- Successfully found x with {func.calls} oracul calls")
             else:
                 print(f"#{no} -- FAILED: x_target: {x_target}    |     x_predicted: {x_predicted}")
                 fails_number += 1
-            total_score += func.calls
+            total_score_1 += func.calls
         else:
             print(f"#{no} -- Found x: {x_predicted} with {func.calls} oracul calls, y is {func(x_predicted)[0]}")
-    print(f"TOTAL SCORE IS {total_score} WITH {fails_number} FAILS")
+            total_score_2 += func.calls
+    print(f"TOTAL SCORE FOR UNI IS {total_score_1} FOR NON-UNI IS {total_score_2} WITH {fails_number} FAILS")
 
 
 if __name__ == "__main__":
