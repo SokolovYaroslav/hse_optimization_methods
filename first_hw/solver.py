@@ -13,44 +13,41 @@ def brent_d(func: Callable[[float], Tuple[float, float]], a: float, b: float, ep
     f, d_f = func(x)
     f_x = f_w = f_v = f
     d_x = d_w = d_v = d_f
-    length_cur = length_past = b - a
     for _ in range(max_iter):
-        # if isclose(d_x, 0.0):
-        #     return x
         x_med = (a + b) / 2
         tol1 = eps * abs(x) + zeps
         tol2 = 2 * tol1
         if abs(x - x_med) <= (tol2 - (b - a) / 2):
             return x
 
-        length_past_past, length_past = length_past, length_cur
-
         # Trying to preform a parabola and cubic minimization
         us = [
             parabola_minima_d(x, w, d_x, d_w),
-            parabola_minima_d(x, v, d_x, d_v),
-            cubic_minima(x, w, f_x, f_w, d_x, d_w),
-            cubic_minima(x, v, f_x, f_v, d_x, d_v)
+            # parabola_minima_d(x, v, d_x, d_v),
+            # cubic_minima(x, w, f_x, f_w, d_x, d_w),
+            # cubic_minima(x, v, f_x, f_v, d_x, d_v)
         ]
-        u = choose_optimum(x, a, b, eps, us)
+        u = choose_best_u(x, a, b, eps, us)
 
         if u is None:
             # Super-linear methods fail, perform bisect
             u = (a + x) / 2 if d_x > 0 else (b + x) / 2
 
         if abs(u - x) < eps:
+            # If we achieved desire precision, stop here
             return x
 
         if abs(u - x) < tol1:
+            # Is step is too small, perform tol1 step
             u = x + copysign(tol1, u - x)
             f_u, d_u = func(u)
             if f_u > f_x:
+                # If starting go to uphill, stop gere
                 return x
         else:
             f_u, d_u = func(u)
 
         # update the state
-        length_cur = abs(u - x)
         if f_u < f_x:
             if u >= x:
                 a = x
@@ -94,12 +91,10 @@ def parabola_minima(x_1: float, x_2: float, x_3: float, f_1: float, f_2: float, 
 
 
 def parabola_minima_d(x_1: float, x_2: float, d_1: float, d_2: float) -> Optional[float]:
-    if x_1 > x_2:
-        x_1, x_2 = x_2, x_1
-        d_1, d_2 = d_2, d_1
     if not isclose(x_1, x_2) and not isclose(d_1, d_2):
-        u = -d_1 * (x_2 - x_1) / (d_2 - d_1) + x_1
-        if not isclose(x_1, u) and not isclose(x_2, u):
+        d = d_1 * (x_2 - x_1) / (d_1 - d_2)
+        u = x_1 + d
+        if not isclose(x_1, u) and not isclose(x_2, u) and d * d_1 <= 0.0:
             return u
 
 
@@ -120,7 +115,7 @@ def cubic_minima(x_1: float, x_2: float, f_1: float, f_2: float, d_1: float, d_2
                 return u
 
 
-def choose_optimum(x: float, a: float, b: float, eps: float, us: List[Optional[float]]) -> Optional[float]:
+def choose_best_u(x: float, a: float, b: float, eps: float, us: List[Optional[float]]) -> Optional[float]:
     us = [u for u in us if u is not None and a + eps < u < b - eps]
     return min(us, key=lambda u: abs(x - u)) if us else None
 
