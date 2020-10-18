@@ -1,6 +1,6 @@
 import decimal
-from math import isclose, sqrt, copysign
-from typing import Tuple, Callable, Optional, List
+from math import copysign
+from typing import Tuple, Callable
 
 from oracul import funcs
 
