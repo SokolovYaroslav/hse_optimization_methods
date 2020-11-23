@@ -12,6 +12,11 @@ class Oracle:
     def __init__(self, dataset: Matrix, labels: np.ndarray):
         self._x = dataset
         self._y = labels
+        self._calls = 0
+
+    @property
+    def num_calls(self) -> int:
+        return self._calls
 
     @staticmethod
     def make_oracle(data_path: str, data_format: str) -> "Oracle":
@@ -26,24 +31,52 @@ class Oracle:
 
         return Oracle(x, y)
 
-    def __call__(self, w: np.ndarray, need_grad: bool, need_hessian: bool) -> Union[float, Tuple[np.ndarray, ...]]:
+    def value(self, w: np.ndarray) -> float:
+        self._calls += 1
         probs = Oracle._sigmoid(self._x.dot(w))
-        loss = Oracle._log_loss(probs, self._y)
-        answer = (loss, )
-        if need_grad:
-            grad = Oracle._log_loss_grad(self._x, probs, self._y)
-            answer += (grad, )
-        if need_hessian:
-            hessian = Oracle._log_loss_hessian(self._x, probs)
-            answer += (hessian, )
-        return answer if len(answer) > 1 else answer[0]
+        return Oracle._log_loss(probs, self._y)
+
+    def grad(self, w: np.ndarray) -> np.ndarray:
+        self._calls += 1
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return Oracle._log_loss_grad(self._x, probs, self._y)
+
+    def hessian(self, w: np.ndarray) -> np.ndarray:
+        self._calls += 1
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return Oracle._log_loss_hessian(self._x, probs)
+
+    def hessian_vec_product(self, w: np.ndarray, d):
+        self._calls += 1
+        pass
+
+    def fuse_value_grad(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        self._calls += 1
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return Oracle._log_loss(probs, self._y), Oracle._log_loss_grad(self._x, probs, self._y)
+
+    def fuse_value_grad_hessian(self, w: np.ndarray) -> Tuple[float, np.ndarray, np.ndarray]:
+        self._calls += 1
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return (
+            Oracle._log_loss(probs, self._y),
+            Oracle._log_loss_grad(self._x, probs, self._y),
+            Oracle._log_loss_hessian(self._x, probs),
+        )
+
+    def fuse_value_grad_hessian_vec_product(self, w: np.ndarray, d):
+        pass
 
     @staticmethod
     def _sigmoid(logits: np.ndarray) -> np.ndarray:
-        return np.where(logits >= 0, 1 / (1 + np.exp(-logits)), np.exp(logits) / (1 + np.exp(logits)))
+        return np.where(
+            logits >= 0,
+            1 / (1 + np.exp(-logits)),
+            np.exp(logits) / (1 + np.exp(logits)),
+        )
 
     @staticmethod
-    def _log_loss(probs: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def _log_loss(probs: np.ndarray, y: np.ndarray) -> float:
         return -np.mean(np.where(y == 1, np.log(probs + 1e-15), np.log(1 - probs + 1e-15)))
 
     @staticmethod
@@ -66,36 +99,35 @@ def test_oracle(path_to_data: str, data_format: str, n_tests: int, seed: int):
     dim = oracle._x.shape[1]
     for _ in range(n_tests):
         w = np.random.randn(dim)
-        _, dloss, d2loss = oracle(w, need_grad=True, need_hessian=True)
+        _, dloss, d2loss = oracle.fuse_value_grad_hessian(w)
         # Testing gradients
         for i in range(dim):
             h = np.zeros_like(w)
             h[i] = eps
-            loss_0 = oracle(w - h, need_grad=False, need_hessian=False)
-            loss_1 = oracle(w + h, need_grad=False, need_hessian=False)
-            dloss_num = (loss_1 - loss_0) / (2 * eps)
+            dloss_num = (oracle.value(w + h) - oracle.value(w - h)) / (2 * eps)
             if not math.isclose(dloss[i], dloss_num, rel_tol=tol, abs_tol=tol):
-                print(f"numeric dloss is differ from oracle's dloss: {dloss[i]} and {dloss_num}\n"
-                      f"Test: {i}th dim, {path_to_data} data, {seed} seed")
+                print(
+                    f"numeric dloss is differ from oracle's dloss: {dloss[i]} and {dloss_num}\n"
+                    f"Test: {i}th dim, {path_to_data} data, {seed} seed"
+                )
         # Testing Hessian
         for i in range(dim):
             for j in range(dim):
                 h = np.zeros_like(w)
                 h[j] = eps
-                _, grad_0 = oracle(w - h, need_grad=True, need_hessian=False)
-                _, grad_1 = oracle(w + h, need_grad=True, need_hessian=False)
-                grad_0, grad_1 = grad_0[i], grad_1[i]
-                d2loss_num = (grad_1 - grad_0) / (2 * eps)
+                d2loss_num = (oracle.grad(w + h)[i] - oracle.grad(w - h)[i]) / (2 * eps)
                 if not math.isclose(float(d2loss[i][j]), d2loss_num, rel_tol=tol, abs_tol=tol):
-                    print(f"numeric hessian is differ from oracle's d2loss: {d2loss[i][j]} and {d2loss_num}\n"
-                          f"Test: {i}-{j}th dim, {path_to_data} data, {seed} seed")
+                    print(
+                        f"numeric hessian is differ from oracle's d2loss: {d2loss[i][j]} and {d2loss_num}\n"
+                        f"Test: {i}-{j}th dim, {path_to_data} data, {seed} seed"
+                    )
 
 
 def main():
     data_paths = [
         ("data/a1a.txt", "libsvm"),
         ("data/breast-cancer_scale.txt", "libsvm"),
-        ("data/generated.tsv", "tsv")
+        ("data/generated.tsv", "tsv"),
     ]
     for path_to_data, data_format in data_paths:
         test_oracle(path_to_data, data_format, 1, seed=42)
