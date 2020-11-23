@@ -48,7 +48,7 @@ class Oracle:
 
     @staticmethod
     def _log_loss_grad(x: Matrix, probs: np.ndarray, y: np.ndarray) -> np.ndarray:
-        return (-(y - probs) @ x) / x.shape[0]
+        return ((probs - y) @ x) / x.shape[0]
 
     @staticmethod
     def _log_loss_hessian(x: Matrix, probs: np.ndarray) -> np.ndarray:
@@ -60,8 +60,8 @@ class Oracle:
 
 def test_oracle(path_to_data: str, data_format: str, n_tests: int, seed: int):
     np.random.seed(seed)
-    eps = 1e-12
-    tol = 1e-3
+    eps = np.sqrt(np.finfo(np.float64).resolution)
+    tol = 1e-7
     oracle = Oracle.make_oracle(path_to_data, data_format)
     dim = oracle._x.shape[1]
     for _ in range(n_tests):
@@ -94,7 +94,7 @@ def test_oracle(path_to_data: str, data_format: str, n_tests: int, seed: int):
 def main():
     data_paths = [
         ("data/a1a.txt", "libsvm"),
-        # ("data/breast-cancer.txt", "libsvm"),
+        ("data/breast-cancer_scale.txt", "libsvm"),
         ("data/generated.tsv", "tsv")
     ]
     for path_to_data, data_format in data_paths:
