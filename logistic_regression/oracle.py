@@ -1,9 +1,12 @@
+import functools
 import math
 from typing import Union, Tuple
 
 import numpy as np
+from scipy.special import expit
 from sklearn.datasets import load_svmlight_file
-from scipy.sparse import spmatrix
+from sklearn.linear_model import LogisticRegression
+from scipy.sparse import spmatrix, hstack, csr_matrix
 
 Matrix = Union[np.ndarray, spmatrix]
 
@@ -18,15 +21,26 @@ class Oracle:
     def num_calls(self) -> int:
         return self._calls
 
+    def reset_calls(self) -> None:
+        self._calls = 0
+
+    @functools.lru_cache()
+    def opt(self, tol: float, max_iter: int) -> np.ndarray:
+        cls = LogisticRegression(penalty="none", tol=tol, fit_intercept=False, solver="newton-cg", max_iter=max_iter)
+        cls.fit(self._x, self._y)
+        return cls.coef_[0]
+
     @staticmethod
     def make_oracle(data_path: str, data_format: str) -> "Oracle":
         assert data_format in ["libsvm", "tsv"]
         if data_format == "tsv":
             data = np.loadtxt(data_path, delimiter="\t")
-            x = data[:, 1:]
-            y = data[:, :1]
+            x = np.hstack((data[:, 1:], np.ones((data.shape[0], 1))))
+            y = data[:, 0]
         else:
             x, y = load_svmlight_file(data_path)
+            x = hstack((x, np.ones((x.shape[0], 1))))
+            x = csr_matrix(x)
             y = (y == 1).astype(np.int8)
 
         return Oracle(x, y)
@@ -46,9 +60,10 @@ class Oracle:
         probs = Oracle._sigmoid(self._x.dot(w))
         return Oracle._log_loss_hessian(self._x, probs)
 
-    def hessian_vec_product(self, w: np.ndarray, d):
+    def hessian_vec_product(self, w: np.ndarray, d: np.ndarray):
         self._calls += 1
-        pass
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return Oracle._log_loss_hessian_vec_prod(self._x, probs, d)
 
     def fuse_value_grad(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         self._calls += 1
@@ -64,16 +79,18 @@ class Oracle:
             Oracle._log_loss_hessian(self._x, probs),
         )
 
-    def fuse_value_grad_hessian_vec_product(self, w: np.ndarray, d):
-        pass
+    def fuse_value_grad_hessian_vec_product(self, w: np.ndarray, d: np.ndarray):
+        self._calls += 1
+        probs = Oracle._sigmoid(self._x.dot(w))
+        return (
+            Oracle._log_loss(probs, self._y),
+            Oracle._log_loss_grad(self._x, probs, self._y),
+            Oracle._log_loss_hessian_vec_prod(self._x, probs, d),
+        )
 
     @staticmethod
     def _sigmoid(logits: np.ndarray) -> np.ndarray:
-        return np.where(
-            logits >= 0,
-            1 / (1 + np.exp(-logits)),
-            np.exp(logits) / (1 + np.exp(logits)),
-        )
+        return expit(logits)
 
     @staticmethod
     def _log_loss(probs: np.ndarray, y: np.ndarray) -> float:
@@ -85,16 +102,22 @@ class Oracle:
 
     @staticmethod
     def _log_loss_hessian(x: Matrix, probs: np.ndarray) -> np.ndarray:
+        scale = (probs * (1 - probs))[:, None]
         if isinstance(x, spmatrix):
-            return (x.T @ x.multiply((probs * (1 - probs))[:, None])).toarray() / x.shape[0]
+            return (x.T @ x.multiply(scale)).toarray() / x.shape[0]
         else:
-            return (x.T @ (x * (probs * (1 - probs))[:, None])) / x.shape[0]
+            return (x.T @ (x * scale)) / x.shape[0]
+
+    @staticmethod
+    def _log_loss_hessian_vec_prod(x: Matrix, probs: np.ndarray, d: np.ndarray) -> np.ndarray:
+        scale = probs * (1 - probs)
+        return ((x @ d) * scale) @ x / x.shape[0]
 
 
 def test_oracle(path_to_data: str, data_format: str, n_tests: int, seed: int):
     np.random.seed(seed)
     eps = np.sqrt(np.finfo(np.float64).resolution)
-    tol = 1e-7
+    tol = 1e-6
     oracle = Oracle.make_oracle(path_to_data, data_format)
     dim = oracle._x.shape[1]
     for _ in range(n_tests):
