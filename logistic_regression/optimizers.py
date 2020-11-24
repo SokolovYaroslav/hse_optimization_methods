@@ -63,13 +63,13 @@ class Optimizer(ABC):
             alpha = self._line_search(w, direction)
             w += alpha * direction
 
-            loss, grad, hessian = self._call_to_oracle(w)
+            loss, grad, *rest = self._call_to_oracle(w)
 
             grad_norm = (grad @ grad) / grad_0_norm
             loss_diff = abs(loss - self._opt_loss)
             self._log(loss_diff, grad_norm)
             if grad_norm <= self._tol:
-                return w
+                break
         return w
 
     def _start_timer(self) -> None:
