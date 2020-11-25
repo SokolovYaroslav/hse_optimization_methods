@@ -60,6 +60,8 @@ class Optimizer(ABC):
 
         for _ in range(self._max_iter):
             direction = self._get_direction(grad, *rest)
+            if np.linalg.norm(direction) > 1e2:
+                direction = direction / np.linalg.norm(direction) * 1e2
             alpha = self._line_search(w, direction)
             w += alpha * direction
 

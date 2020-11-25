@@ -27,11 +27,12 @@ TITLES = {
     "iters": "method's iterations",
 }
 
+
 # https://stackoverflow.com/questions/14313510/how-to-calculate-moving-average-using-numpy
 def _moving_average(a: np.ndarray, n: int = 3) -> np.ndarray:
     ret = np.cumsum(a, dtype=float)
     ret[n:] = ret[n:] - ret[:-n]
-    return ret[n - 1:] / n
+    return ret[n - 1 :] / n
 
 
 class Experiment:
@@ -56,15 +57,22 @@ class Experiment:
         stats: List[dict],
         axes: Tuple[str, ...] = ("times", "calls", "iters"),
         enable_smoothing: bool = False,
+        dataset_name: str = None,
     ):
         for ax in axes:
             fig = make_subplots(
                 rows=1,
                 cols=2,
                 horizontal_spacing=0.05,
-                subplot_titles=[r"$\log(|F(w_k) - F(w_*)|)$", r"$\log(\frac{|\nabla F(w_k)|^2}{|\nabla F(w_0)|^2})$"],
+                subplot_titles=[
+                    r"$\log_{10}(|F(w_k) - F(w_*)|)$",
+                    r"$\log_{10}(\frac{|\nabla F(w_k)|^2}{|\nabla F(w_0)|^2})$",
+                ],
             )
-            fig.update_layout(title=f"Error dependency by {TITLES[ax]}", legend={"orientation": "h"})
+            title = f"Error dependency by {TITLES[ax]}"
+            if dataset_name:
+                title += f" on dataset {dataset_name}"
+            fig.update_layout(title=title, legend={"orientation": "h"})
             for i, rk in enumerate(("loss_diffs", "grad_norm")):
                 for name, stat, color in zip(names, stats, COLORS):
                     if enable_smoothing and i == 1:

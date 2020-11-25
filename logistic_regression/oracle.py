@@ -1,5 +1,4 @@
 import functools
-import math
 from typing import Union, Tuple
 
 import numpy as np
@@ -30,6 +29,10 @@ class Oracle:
         cls.fit(self._x, self._y)
         return cls.coef_[0]
 
+    @property
+    def dim(self) -> int:
+        return self._x.shape[1]
+
     @staticmethod
     def make_oracle(data_path: str, data_format: str) -> "Oracle":
         assert data_format in ["libsvm", "tsv"]
@@ -41,7 +44,9 @@ class Oracle:
             x, y = load_svmlight_file(data_path)
             x = hstack((x, np.ones((x.shape[0], 1))))
             x = csr_matrix(x)
-            y = (y == 1).astype(np.int8)
+        classes = np.unique(y)
+        assert len(classes) == 2
+        y = (y == classes[0]).astype(np.int8)
 
         return Oracle(x, y)
 
@@ -114,36 +119,34 @@ class Oracle:
         return ((x @ d) * scale) @ x / x.shape[0]
 
 
-def test_oracle(path_to_data: str, data_format: str, n_tests: int, seed: int):
+def test_oracle(path_to_data: str, data_format: str, seed: int = 42):
     np.random.seed(seed)
     eps = np.sqrt(np.finfo(np.float64).resolution)
-    tol = 1e-6
     oracle = Oracle.make_oracle(path_to_data, data_format)
     dim = oracle._x.shape[1]
-    for _ in range(n_tests):
-        w = np.random.randn(dim)
-        _, dloss, d2loss = oracle.fuse_value_grad_hessian(w)
-        # Testing gradients
-        for i in range(dim):
+    w = np.random.randn(dim)
+    _, dloss, d2loss = oracle.fuse_value_grad_hessian(w)
+
+    # Testing gradients
+    max_error = float("-inf")
+    for i in range(dim):
+        h = np.zeros_like(w)
+        h[i] = eps
+        dloss_num = (oracle.value(w + h) - oracle.value(w - h)) / (2 * eps)
+        abs_error = abs(dloss[i] - dloss_num)
+        max_error = max(max_error, abs_error)
+    print(f"Maximum error for gradient is {max_error}")
+
+    # Testing Hessian
+    max_error = float("-inf")
+    for i in range(dim):
+        for j in range(dim):
             h = np.zeros_like(w)
-            h[i] = eps
-            dloss_num = (oracle.value(w + h) - oracle.value(w - h)) / (2 * eps)
-            if not math.isclose(dloss[i], dloss_num, rel_tol=tol, abs_tol=tol):
-                print(
-                    f"numeric dloss is differ from oracle's dloss: {dloss[i]} and {dloss_num}\n"
-                    f"Test: {i}th dim, {path_to_data} data, {seed} seed"
-                )
-        # Testing Hessian
-        for i in range(dim):
-            for j in range(dim):
-                h = np.zeros_like(w)
-                h[j] = eps
-                d2loss_num = (oracle.grad(w + h)[i] - oracle.grad(w - h)[i]) / (2 * eps)
-                if not math.isclose(float(d2loss[i][j]), d2loss_num, rel_tol=tol, abs_tol=tol):
-                    print(
-                        f"numeric hessian is differ from oracle's d2loss: {d2loss[i][j]} and {d2loss_num}\n"
-                        f"Test: {i}-{j}th dim, {path_to_data} data, {seed} seed"
-                    )
+            h[j] = eps
+            d2loss_num = (oracle.grad(w + h)[i] - oracle.grad(w - h)[i]) / (2 * eps)
+            abs_error = abs(d2loss[i][j] - d2loss_num)
+            max_error = max(max_error, abs_error)
+    print(f"Maximum error for hessian is {max_error}")
 
 
 def main():
@@ -153,7 +156,7 @@ def main():
         ("data/generated.tsv", "tsv"),
     ]
     for path_to_data, data_format in data_paths:
-        test_oracle(path_to_data, data_format, 1, seed=42)
+        test_oracle(path_to_data, data_format, seed=42)
 
 
 if __name__ == "__main__":
