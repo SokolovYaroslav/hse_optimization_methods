@@ -40,7 +40,7 @@ class LineSearch(ABC):
         if not self._off_brackets:
             return bracket(f, xa, xb)[:3]
         else:
-            return 0.0, 1.0, 10.0
+            return 0.0, 10.0
 
     def _func(self, w: np.ndarray, direction: np.ndarray) -> callable:
         return lambda alpha: self._f.value(w + alpha * direction)
@@ -53,7 +53,11 @@ class Golden(LineSearch):
 
     def _golden_search(self, f: callable, brack: tuple) -> float:
         phi, Phi = (np.sqrt(5) - 1) / 2, 1 - (np.sqrt(5) - 1) / 2
-        ax, bx, cx = brack
+        if len(brack) == 3:
+            ax, bx, cx = brack
+        else:
+            ax, cx = brack
+            bx = ax + phi * (cx - ax)
 
         x0, x3 = ax, cx
         if abs(cx - bx) > abs(bx - ax):
@@ -82,10 +86,9 @@ class Brent(LineSearch):
 
 
 class Armijo(LineSearch):
-    def __init__(self, oracle: Oracle, max_iter: int, tol: float, c: float = 0.5, p: float = 0.5):
+    def __init__(self, oracle: Oracle, max_iter: int, tol: float, c: float = 0.5):
         super().__init__(oracle, max_iter, tol)
         self._c = c
-        self._p = p
 
     def __call__(self, w: np.ndarray, direction: np.ndarray) -> float:
         func = self._func(w, direction)
@@ -97,7 +100,7 @@ class Armijo(LineSearch):
         for i in range(self._max_iter):
             if f_1 <= f_0 + self._c * alpha * dd:
                 break
-            alpha *= self._p
+            alpha *= 0.5
             f_1 = func(alpha)
 
         return alpha
@@ -108,9 +111,14 @@ class Wolf(LineSearch):
         super().__init__(oracle, max_iter, tol)
         self._c1 = c1
         self._c2 = c2
+        self._armijo = Armijo(oracle, max_iter, tol, c1)
 
     def __call__(self, w: np.ndarray, direction: np.ndarray) -> float:
-        return line_search(self._f.value, self._f.grad, w, direction, c1=self._c1, c2=self._c2)[0]
+        res = line_search(self._f.value, self._f.grad, w, direction, c1=self._c1, c2=self._c2)[0]
+        if res is not None:
+            return res
+        else:
+            return self._armijo(w, direction)
 
 
 class Nesterov(LineSearch):

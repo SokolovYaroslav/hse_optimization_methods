@@ -27,6 +27,12 @@ TITLES = {
     "iters": "method's iterations",
 }
 
+# https://stackoverflow.com/questions/14313510/how-to-calculate-moving-average-using-numpy
+def _moving_average(a: np.ndarray, n: int = 3) -> np.ndarray:
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+
 
 class Experiment:
     @staticmethod
@@ -49,6 +55,7 @@ class Experiment:
         names: List[str],
         stats: List[dict],
         axes: Tuple[str, ...] = ("times", "calls", "iters"),
+        enable_smoothing: bool = False,
     ):
         for ax in axes:
             fig = make_subplots(
@@ -60,9 +67,15 @@ class Experiment:
             fig.update_layout(title=f"Error dependency by {TITLES[ax]}", legend={"orientation": "h"})
             for i, rk in enumerate(("loss_diffs", "grad_norm")):
                 for name, stat, color in zip(names, stats, COLORS):
+                    if enable_smoothing and i == 1:
+                        y = _moving_average(np.array(stat[rk]), n=30)
+                        x = stat[ax][29:]
+                    else:
+                        x = stat[ax]
+                        y = stat[rk]
                     scatter = go.Scatter(
-                        x=stat[ax],
-                        y=stat[rk],
+                        x=x,
+                        y=y,
                         mode="lines",
                         name=name,
                         line_color=color,
