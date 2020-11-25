@@ -13,14 +13,14 @@ class Optimizer(ABC):
     def __init__(
         self, oracle: Oracle, line_search: LineSearch, start_point: np.ndarray, tol: float = 1e-8, max_iter: int = 10000
     ):
-        self._f = oracle
+        self._oracle = oracle
         self._line_search = line_search
         self._start_point = start_point
         self._tol = tol
         self._max_iter = max_iter
 
         self._times = []
-        self._oracul_calls = []
+        self._oracle_calls = []
         self._iterations = []
         self._grad_norms = []
         self._loss_diffs = []
@@ -73,7 +73,7 @@ class Optimizer(ABC):
         return w
 
     def _start_timer(self) -> None:
-        self._f.reset_calls()
+        self._oracle.reset_calls()
         self._timer = time.time()
 
     def _log(self, loss_diff: float, grad_norm: float) -> None:
@@ -81,16 +81,16 @@ class Optimizer(ABC):
         self._num_iterations += 1
 
         self._times.append(spent_time)
-        self._oracul_calls.append(self._f.num_calls)
+        self._oracle_calls.append(self._oracle.num_calls)
         self._iterations.append(self._num_iterations)
-        self._loss_diffs.append(loss_diff)
-        self._grad_norms.append(grad_norm)
+        self._loss_diffs.append(np.log10(loss_diff))
+        self._grad_norms.append(np.log10(grad_norm))
 
     @property
     def stats(self) -> Dict[str, list]:
         return {
             "times": self._times,
-            "calls": self._oracul_calls,
+            "calls": self._oracle_calls,
             "iters": self._iterations,
             "grad_norm": self._grad_norms,
             "loss_diffs": self._loss_diffs,
@@ -107,7 +107,7 @@ class Optimizer(ABC):
 
 class GradientDescent(Optimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Any]:
-        return self._f.fuse_value_grad(w) + (None,)
+        return self._oracle.fuse_value_grad(w) + (None,)
 
     def _get_direction(self, grad: np.ndarray, *args) -> np.ndarray:
         return -grad
@@ -115,7 +115,7 @@ class GradientDescent(Optimizer):
 
 class NewtonCholecky(Optimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._f.fuse_value_grad_hessian(w)
+        return self._oracle.fuse_value_grad_hessian(w)
 
     def _get_direction(self, grad: np.ndarray, hessian: Optional[np.ndarray]) -> np.ndarray:
         tau_has_changed = False
@@ -143,7 +143,7 @@ class NewtonCholecky(Optimizer):
 
 class NewtonSVD(Optimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._f.fuse_value_grad_hessian(w)
+        return self._oracle.fuse_value_grad_hessian(w)
 
     def _get_direction(self, grad: np.ndarray, hessian: Optional[np.ndarray]) -> np.ndarray:
         eps = np.sqrt(np.finfo(np.float64).resolution)
@@ -154,17 +154,17 @@ class NewtonSVD(Optimizer):
 
 class HessianFree(Optimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._f.fuse_value_grad(w) + (w,)
+        return self._oracle.fuse_value_grad(w) + (w,)
 
     def _get_direction(self, grad: np.ndarray, w: np.ndarray) -> np.ndarray:
         x, b = -grad, -grad
-        r_cur = self._f.hessian_vec_product(w, x) - b
+        r_cur = self._oracle.hessian_vec_product(w, x) - b
         p = -r_cur
         for _ in range(2 * grad.shape[0]):
             if np.linalg.norm(r_cur) < self._tol:
                 break
             r_cur_norm = r_cur @ r_cur
-            A_p = self._f.hessian_vec_product(w, p)
+            A_p = self._oracle.hessian_vec_product(w, p)
             alpha = r_cur_norm / (p @ A_p)
             x += alpha * p
             r_next = r_cur + alpha * A_p
