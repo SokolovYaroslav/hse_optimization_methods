@@ -55,11 +55,11 @@ class Optimizer(ABC):
         self._start_timer()
         w = self._start_point.copy()
 
-        loss, grad, *rest = self._call_to_oracle(w)
+        loss, grad = self._call_to_oracle(w)
         grad_0_norm = grad @ grad
 
         for _ in range(self._max_iter):
-            direction = self._get_direction(grad, *rest)
+            direction = self._get_direction(grad)
             if np.linalg.norm(direction) > 1e2:
                 direction = direction / np.linalg.norm(direction) * 1e2
             alpha = self._line_search(w, direction)
@@ -99,74 +99,78 @@ class Optimizer(ABC):
         }
 
     @abstractmethod
-    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Any]:
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         raise NotImplementedError
 
     @abstractmethod
-    def _get_direction(self, grad: np.ndarray, *args) -> np.ndarray:
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         raise NotImplemented
 
 
 class GradientDescent(Optimizer):
-    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Any]:
-        return self._oracle.fuse_value_grad(w) + (None,)
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        return self._oracle.fuse_value_grad(w)
 
-    def _get_direction(self, grad: np.ndarray, *args) -> np.ndarray:
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         return -grad
 
 
 class NewtonCholecky(Optimizer):
-    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._oracle.fuse_value_grad_hessian(w)
+    def __init__(
+        self, oracle: Oracle, line_search: LineSearch, start_point: np.ndarray, tol: float = 1e-8, max_iter: int = 10000
+    ):
+        super().__init__(oracle, line_search, start_point, tol, max_iter)
+        self._tau = 1e-8
 
-    def _get_direction(self, grad: np.ndarray, hessian: Optional[np.ndarray]) -> np.ndarray:
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        val, grad, hessian = self._oracle.fuse_value_grad_hessian(w)
+        self._hessian = hessian
+        return val, grad
+
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         tau_has_changed = False
         while True:
             try:
-                factor = cho_factor(hessian)
+                factor = cho_factor(self._hessian)
                 break
             except LinAlgError:
-                dim = hessian.shape[0]
-                hessian[range(dim), range(dim)] += self._tau
-                self._tau_attr *= 2
+                dim = self._hessian.shape[0]
+                self._hessian[range(dim), range(dim)] += self._tau
+                self._tau *= 2
                 tau_has_changed = True
         if tau_has_changed:
-            self._tau_attr /= 2
+            self._tau /= 2
         return cho_solve(factor, -grad)
-
-    @property
-    def _tau(self):
-        if hasattr(self, "_tau_attr"):
-            return self._tau_attr
-        else:
-            self._tau_attr = 1e-8
-            return self._tau_attr
 
 
 class NewtonSVD(Optimizer):
-    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._oracle.fuse_value_grad_hessian(w)
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        val, grad, hessian = self._oracle.fuse_value_grad_hessian(w)
+        self._hessian = hessian
+        return val, grad
 
-    def _get_direction(self, grad: np.ndarray, hessian: Optional[np.ndarray]) -> np.ndarray:
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         eps = np.sqrt(np.finfo(np.float64).resolution)
-        U, s, V = svd(hessian)
+        U, s, V = svd(self._hessian)
         scale = 1 / np.maximum(s, eps)
         return U @ (V @ (-grad) * scale)
 
 
 class HessianFree(Optimizer):
-    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray, Optional[np.ndarray]]:
-        return self._oracle.fuse_value_grad(w) + (w,)
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        val, grad = self._oracle.fuse_value_grad(w)
+        self._cur_w = w
+        return val, grad
 
-    def _get_direction(self, grad: np.ndarray, w: np.ndarray) -> np.ndarray:
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         x, b = -grad, -grad
-        r_cur = self._oracle.hessian_vec_product(w, x) - b
+        r_cur = self._oracle.hessian_vec_product(self._cur_w, x) - b
         p = -r_cur
         for _ in range(2 * grad.shape[0]):
             if np.linalg.norm(r_cur) < self._tol:
                 break
             r_cur_norm = r_cur @ r_cur
-            A_p = self._oracle.hessian_vec_product(w, p)
+            A_p = self._oracle.hessian_vec_product(self._cur_w, p)
             alpha = r_cur_norm / (p @ A_p)
             x += alpha * p
             r_next = r_cur + alpha * A_p
