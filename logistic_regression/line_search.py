@@ -40,7 +40,7 @@ class LineSearch(ABC):
         if not self._off_brackets:
             return bracket(f, xa, xb)[:3]
         else:
-            return 0.0, 10.0
+            return 0.0, 1.0
 
     def _func(self, w: np.ndarray, direction: np.ndarray) -> callable:
         return lambda alpha: self._f.value(w + alpha * direction)
