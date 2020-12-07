@@ -1,4 +1,4 @@
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 import numpy as np
 import plotly.graph_objs as go
@@ -45,9 +45,10 @@ class Experiment:
         start_point: np.ndarray,
         tol: float,
         max_iter: int,
+        history_size: Optional[int] = None,
     ) -> Tuple[np.ndarray, dict]:
         line_search = LineSearch.get_line_search(line_search, oracle, **line_search_params)
-        optimizer = Optimizer.get_optimizer(optimizer, oracle, line_search, start_point, tol, max_iter)
+        optimizer = Optimizer.get_optimizer(optimizer, oracle, line_search, start_point, tol, max_iter, history_size)
         w_opt = optimizer()
         return w_opt, optimizer.stats
 

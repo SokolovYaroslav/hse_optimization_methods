@@ -1,6 +1,7 @@
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, Optional, Any
+from collections import deque
+from typing import Dict, Tuple, Optional, Deque
 
 from scipy.linalg import cho_factor, LinAlgError, cho_solve, svd
 
@@ -36,18 +37,33 @@ class Optimizer(ABC):
         start_point: np.ndarray,
         tol: float = 1e-8,
         max_iter: int = 10000,
+        history_size: Optional[int] = None,
     ) -> "Optimizer":
         if name == "GD":
+            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
             return GradientDescent(oracle, line_search, start_point, tol, max_iter)
+
         elif name == "newton-chol":
+            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
             line_search.turn_off_brackets()
             return NewtonCholecky(oracle, line_search, start_point, tol, max_iter)
+
         elif name == "newton-svd":
+            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
             line_search.turn_off_brackets()
             return NewtonSVD(oracle, line_search, start_point, tol, max_iter)
+
         elif name == "hessian-free":
+            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
             line_search.turn_off_brackets()
             return HessianFree(oracle, line_search, start_point, tol, max_iter)
+
+        elif name == "l-bfgs":
+            assert history_size is not None, f"You must provide a history_size, got {history_size}"
+            assert history_size > 0, f"You must provide a positive history_size, got {history_size}"
+            line_search.turn_off_brackets()
+            return LBFGS(oracle, line_search, start_point, history_size, tol, max_iter)
+
         else:
             raise ValueError(f"Unknown optimizer {name}")
 
@@ -63,9 +79,9 @@ class Optimizer(ABC):
             if np.linalg.norm(direction) > 1e2:
                 direction = direction / np.linalg.norm(direction) * 1e2
             alpha = self._line_search(w, direction)
-            w += alpha * direction
+            w = w + alpha * direction
 
-            loss, grad, *rest = self._call_to_oracle(w)
+            loss, grad = self._call_to_oracle(w)
 
             grad_norm = (grad @ grad) / grad_0_norm
             loss_diff = abs(loss - self._opt_loss)
@@ -181,3 +197,53 @@ class HessianFree(Optimizer):
             r_cur, r_cur_norm = r_next, r_next_norm
 
         return x
+
+
+class LBFGS(Optimizer):
+    def __init__(
+        self,
+        oracle: Oracle,
+        line_search: LineSearch,
+        start_point: np.ndarray,
+        history_size: int,
+        tol: float = 1e-8,
+        max_iter: int = 10000,
+    ):
+        super().__init__(oracle, line_search, start_point, tol, max_iter)
+        self._history: Deque[Tuple[np.ndarray, np.ndarray]] = deque(maxlen=history_size)
+        self._last_w: Optional[np.ndarray] = None
+        self._last_grad: Optional[np.ndarray] = None
+
+    def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
+        value, grad = self._oracle.fuse_value_grad(w)
+
+        if self._last_w is not None:
+            s = w - self._last_w
+            y = grad - self._last_grad
+            self._history.appendleft((s, y))
+
+        self._last_w = w
+        self._last_grad = grad
+
+        return value, grad
+
+    def _get_direction(self, grad: np.ndarray) -> np.ndarray:
+        d = -grad
+        # first is the newest
+        mus = []
+        for s, y in self._history:
+            mu = (s @ d) / (s @ y)
+            d -= mu * y
+            mus.append(mu)
+        if self._history:
+            s_newest, y_newest = self._history[0]
+            d *= (s_newest @ y_newest) / (y_newest @ y_newest)
+        # first is the oldest
+        self._history.reverse()
+        mus = reversed(mus)
+        for mu, (s, y) in zip(mus, self._history):
+            beta = (y @ d) / (s @ y)
+            d += (mu - beta) * s
+        # keep first is the newest for outside usage
+        self._history.reverse()
+        return d
