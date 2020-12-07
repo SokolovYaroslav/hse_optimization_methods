@@ -206,8 +206,8 @@ class LBFGS(Optimizer):
         line_search: LineSearch,
         start_point: np.ndarray,
         history_size: int,
-        tol: float = 1e-8,
-        max_iter: int = 10000,
+        tol: float,
+        max_iter: int,
     ):
         super().__init__(oracle, line_search, start_point, tol, max_iter)
         self._history: Deque[Tuple[np.ndarray, np.ndarray]] = deque(maxlen=history_size)
@@ -229,8 +229,8 @@ class LBFGS(Optimizer):
 
     def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         d = -grad
-        # first is the newest
         mus = []
+        # first is the newest
         for s, y in self._history:
             mu = (s @ d) / (s @ y)
             d -= mu * y
@@ -238,12 +238,7 @@ class LBFGS(Optimizer):
         if self._history:
             s_newest, y_newest = self._history[0]
             d *= (s_newest @ y_newest) / (y_newest @ y_newest)
-        # first is the oldest
-        self._history.reverse()
-        mus = reversed(mus)
-        for mu, (s, y) in zip(mus, self._history):
+        for mu, (s, y) in zip(reversed(mus), reversed(self._history)):
             beta = (y @ d) / (s @ y)
             d += (mu - beta) * s
-        # keep first is the newest for outside usage
-        self._history.reverse()
         return d
