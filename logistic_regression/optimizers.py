@@ -4,73 +4,129 @@ from collections import deque
 from typing import Dict, Tuple, Optional, Deque
 
 from scipy.linalg import cho_factor, LinAlgError, cho_solve, svd
+from sklearn.linear_model import LogisticRegression
 
 from logistic_regression.line_search import LineSearch
 from logistic_regression.oracle import Oracle
 import numpy as np
 
 
-class Optimizer(ABC):
+def get_optimizer(
+    name: str,
+    oracle: Oracle,
+    start_point: np.ndarray,
+    tol: float = 1e-8,
+    max_iter: int = 10000,
+    line_search: Optional[LineSearch] = None,
+    history_size: Optional[int] = None,
+) -> "AbstractOptimizer":
+    if name != "l-bfgs":
+        assert (
+            history_size is None
+        ), "history_size is an argument only for l-bfgs optimizer"
+    if name != "lasso":
+        assert line_search is not None, "you must provide line_search method"
+
+    if name == "GD":
+        return GradientDescent(oracle, line_search, start_point, tol, max_iter)
+
+    elif name == "newton-chol":
+        line_search.turn_off_brackets()
+        return NewtonCholecky(oracle, line_search, start_point, tol, max_iter)
+
+    elif name == "newton-svd":
+        line_search.turn_off_brackets()
+        return NewtonSVD(oracle, line_search, start_point, tol, max_iter)
+
+    elif name == "hessian-free":
+        line_search.turn_off_brackets()
+        return HessianFree(oracle, line_search, start_point, tol, max_iter)
+
+    elif name == "l-bfgs":
+        assert (
+            history_size is not None
+        ), f"You must provide a history size, when using l-bfgs"
+        line_search.turn_off_brackets()
+        return LBFGS(oracle, line_search, start_point, history_size, tol, max_iter)
+
+    else:
+        raise ValueError(f"Unknown optimizer {name}")
+
+
+class AbstractOptimizer(ABC):
     def __init__(
-        self, oracle: Oracle, line_search: LineSearch, start_point: np.ndarray, tol: float = 1e-8, max_iter: int = 10000
+        self,
+        oracle: Oracle,
+        start_point: np.ndarray,
+        tol: float = 1e-8,
+        max_iter: int = 10000,
     ):
         self._oracle = oracle
-        self._line_search = line_search
-        self._start_point = start_point
+        self._start_point = start_point.copy()
         self._tol = tol
         self._max_iter = max_iter
 
-        self._times = []
-        self._oracle_calls = []
-        self._iterations = []
-        self._grad_norms = []
-        self._loss_diffs = []
+        self._stats = {
+            "times": [],
+            "calls": [],
+            "iters": [],
+            "loss_diffs": [],
+        }
         self._timer = None
         self._num_iterations = 0
-        self._opt_loss = oracle.value(oracle.opt(tol, max_iter))
+        self._opt_loss = self._get_opt_loss(oracle, tol, max_iter)
 
-    @staticmethod
-    def get_optimizer(
-        name: str,
+    @abstractmethod
+    def _get_opt_loss(self, oracle, tol, max_iter) -> float:
+        raise NotImplementedError
+
+    def __call__(self) -> np.ndarray:
+        self._start_timer()
+        return self._optimize()
+
+    @abstractmethod
+    def _optimize(self) -> np.ndarray:
+        """Must call self._log on each step"""
+        raise NotImplementedError
+
+    @property
+    def stats(self) -> Dict[str, list]:
+        return self._stats
+
+    def _start_timer(self) -> None:
+        self._oracle.reset_calls()
+        self._timer = time.time()
+
+    def _log(self, cur_loss: float, **kwargs) -> None:
+        spent_time = time.time() - self._timer
+        self._num_iterations += 1
+        loss_diff = abs(cur_loss - self._opt_loss)
+
+        self._stats["times"].append(spent_time)
+        self._stats["oracle_calls"].append(self._oracle.num_calls)
+        self._stats["iters"].append(self._num_iterations)
+        self._stats["loss_diffs"].append(np.log10(loss_diff))
+
+        for name, val in kwargs:
+            if name not in self._stats:
+                self._stats[name] = []
+            self._stats[name].append(val)
+
+
+class CasualOptimizer(AbstractOptimizer):
+    def __init__(
+        self,
         oracle: Oracle,
         line_search: LineSearch,
         start_point: np.ndarray,
         tol: float = 1e-8,
         max_iter: int = 10000,
-        history_size: Optional[int] = None,
-    ) -> "Optimizer":
-        if name == "GD":
-            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
-            return GradientDescent(oracle, line_search, start_point, tol, max_iter)
+    ):
+        super().__init__(oracle, start_point, tol, max_iter)
+        self._line_search = line_search
 
-        elif name == "newton-chol":
-            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
-            line_search.turn_off_brackets()
-            return NewtonCholecky(oracle, line_search, start_point, tol, max_iter)
-
-        elif name == "newton-svd":
-            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
-            line_search.turn_off_brackets()
-            return NewtonSVD(oracle, line_search, start_point, tol, max_iter)
-
-        elif name == "hessian-free":
-            assert history_size is None, f"history_size is an argument only for l-bfgs optimizer"
-            line_search.turn_off_brackets()
-            return HessianFree(oracle, line_search, start_point, tol, max_iter)
-
-        elif name == "l-bfgs":
-            assert history_size is not None, f"You must provide a history_size, got {history_size}"
-            assert history_size > 0, f"You must provide a positive history_size, got {history_size}"
-            line_search.turn_off_brackets()
-            return LBFGS(oracle, line_search, start_point, history_size, tol, max_iter)
-
-        else:
-            raise ValueError(f"Unknown optimizer {name}")
-
-    def __call__(self) -> np.ndarray:
-        self._start_timer()
-        w = self._start_point.copy()
-
+    def _optimize(self) -> np.ndarray:
+        w = self._start_point
         loss, grad = self._call_to_oracle(w)
         grad_0_norm = grad @ grad
 
@@ -85,34 +141,10 @@ class Optimizer(ABC):
 
             grad_norm = (grad @ grad) / grad_0_norm
             loss_diff = abs(loss - self._opt_loss)
-            self._log(loss_diff, grad_norm)
+            self._log(loss_diff, grad_norm=grad_norm)
             if grad_norm <= self._tol:
                 break
         return w
-
-    def _start_timer(self) -> None:
-        self._oracle.reset_calls()
-        self._timer = time.time()
-
-    def _log(self, loss_diff: float, grad_norm: float) -> None:
-        spent_time = time.time() - self._timer
-        self._num_iterations += 1
-
-        self._times.append(spent_time)
-        self._oracle_calls.append(self._oracle.num_calls)
-        self._iterations.append(self._num_iterations)
-        self._loss_diffs.append(np.log10(loss_diff))
-        self._grad_norms.append(np.log10(grad_norm))
-
-    @property
-    def stats(self) -> Dict[str, list]:
-        return {
-            "times": self._times,
-            "calls": self._oracle_calls,
-            "iters": self._iterations,
-            "grad_norm": self._grad_norms,
-            "loss_diffs": self._loss_diffs,
-        }
 
     @abstractmethod
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
@@ -122,8 +154,19 @@ class Optimizer(ABC):
     def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         raise NotImplemented
 
+    def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
+        cls = LogisticRegression(
+            penalty="none",
+            tol=tol,
+            fit_intercept=False,
+            solver="newton-cg",
+            max_iter=max_iter,
+        )
+        cls.fit(*oracle.data)
+        return cls.coef_[0]
 
-class GradientDescent(Optimizer):
+
+class GradientDescent(CasualOptimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         return self._oracle.fuse_value_grad(w)
 
@@ -131,9 +174,14 @@ class GradientDescent(Optimizer):
         return -grad
 
 
-class NewtonCholecky(Optimizer):
+class NewtonCholecky(CasualOptimizer):
     def __init__(
-        self, oracle: Oracle, line_search: LineSearch, start_point: np.ndarray, tol: float = 1e-8, max_iter: int = 10000
+        self,
+        oracle: Oracle,
+        line_search: LineSearch,
+        start_point: np.ndarray,
+        tol: float = 1e-8,
+        max_iter: int = 10000,
     ):
         super().__init__(oracle, line_search, start_point, tol, max_iter)
         self._tau = 1e-8
@@ -159,7 +207,7 @@ class NewtonCholecky(Optimizer):
         return cho_solve(factor, -grad)
 
 
-class NewtonSVD(Optimizer):
+class NewtonSVD(CasualOptimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         val, grad, hessian = self._oracle.fuse_value_grad_hessian(w)
         self._hessian = hessian
@@ -172,7 +220,7 @@ class NewtonSVD(Optimizer):
         return U @ (V @ (-grad) * scale)
 
 
-class HessianFree(Optimizer):
+class HessianFree(CasualOptimizer):
     def _call_to_oracle(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         val, grad = self._oracle.fuse_value_grad(w)
         self._cur_w = w
@@ -199,7 +247,7 @@ class HessianFree(Optimizer):
         return x
 
 
-class LBFGS(Optimizer):
+class LBFGS(CasualOptimizer):
     def __init__(
         self,
         oracle: Oracle,
@@ -242,3 +290,59 @@ class LBFGS(Optimizer):
             beta = (y @ d) / (s @ y)
             d += (mu - beta) * s
         return d
+
+
+class LassoOptimizer(AbstractOptimizer):
+    def __init__(
+        self,
+        oracle: Oracle,
+        start_point: np.ndarray,
+        lambda_: float,
+        tol: float = 1e-8,
+        max_iter: int = 10000,
+    ):
+        assert max_iter > 0
+        super().__init__(oracle, start_point, tol, max_iter)
+        self._lambda = lambda_
+
+    def _optimize(self) -> np.ndarray:
+        w = self._start_point
+        lipschitz = 1.0
+
+        loss, grad = self._oracle.fuse_value_grad(w)
+        for _ in range(self._max_iter):
+            for _ in range(self._max_iter):
+                alpha = 1 / lipschitz
+                new_w = self._proximal_step(w - alpha * grad, alpha)
+                new_loss = self._oracle.value(new_w)
+                ws_diff = new_w - w
+                ws_diff_norm2 = ws_diff @ ws_diff
+                if new_loss <= loss + (grad @ ws_diff) + lipschitz / 2 * ws_diff_norm2:
+                    break
+                lipschitz *= 2
+
+            w, loss = new_w, new_loss
+
+            self._log(loss)
+            if ws_diff_norm2 / (alpha ** 2) <= self._tol:
+                break
+
+            lipschitz /= 2
+
+        return w
+
+    def _proximal_step(self, x: np.ndarray, alpha: float) -> np.ndarray:
+        alpha = self._lambda * alpha
+        return np.sign(x) * np.maximum(np.abs(x) - alpha, 0)
+
+    def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
+        cls = LogisticRegression(
+            penalty="l1",
+            C=1 / self._lambda,
+            tol=tol,
+            fit_intercept=False,
+            solver="liblinear",
+            max_iter=max_iter,
+        )
+        cls.fit(*oracle.data)
+        return cls.coef_[0]

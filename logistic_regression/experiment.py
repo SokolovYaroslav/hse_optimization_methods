@@ -5,7 +5,7 @@ import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 
 from logistic_regression.line_search import LineSearch
-from logistic_regression.optimizers import Optimizer
+from logistic_regression.optimizers import get_optimizer
 from logistic_regression.oracle import Oracle
 
 COLORS = [
@@ -25,7 +25,11 @@ TITLES = {
     "times": "spent time",
     "calls": "oracle calls",
     "iters": "method's iterations",
+    "loss_diffs": r"$\log_{10}(|F(w_k) - F(w_*)|)$",
+    "grad_norm": r"$\log_{10}(\frac{|\nabla F(w_k)|^2}{|\nabla F(w_0)|^2})$",
 }
+
+X_STATS = {"times", "calls", "iters"}
 
 
 # https://stackoverflow.com/questions/14313510/how-to-calculate-moving-average-using-numpy
@@ -47,8 +51,12 @@ class Experiment:
         max_iter: int,
         history_size: Optional[int] = None,
     ) -> Tuple[np.ndarray, dict]:
-        line_search = LineSearch.get_line_search(line_search, oracle, **line_search_params)
-        optimizer = Optimizer.get_optimizer(optimizer, oracle, line_search, start_point, tol, max_iter, history_size)
+        line_search = LineSearch.get_line_search(
+            line_search, oracle, **line_search_params
+        )
+        optimizer = get_optimizer(
+            optimizer, oracle, start_point, tol, max_iter, line_search, history_size
+        )
         w_opt = optimizer()
         return w_opt, optimizer.stats
 
@@ -60,28 +68,27 @@ class Experiment:
         enable_smoothing: bool = False,
         dataset_name: str = None,
     ):
+        y_stats = {k: v for k, v in stats if k not in X_STATS}
+
         for ax in axes:
             fig = make_subplots(
                 rows=1,
-                cols=2,
+                cols=len(y_stats),
                 horizontal_spacing=0.05,
-                subplot_titles=[
-                    r"$\log_{10}(|F(w_k) - F(w_*)|)$",
-                    r"$\log_{10}(\frac{|\nabla F(w_k)|^2}{|\nabla F(w_0)|^2})$",
-                ],
+                subplot_titles=[TITLES[y_stat] for y_stat in y_stats],
             )
             title = f"Error dependency by {TITLES[ax]}"
             if dataset_name:
                 title += f" on dataset {dataset_name}"
             fig.update_layout(title=title, legend={"orientation": "h"})
-            for i, rk in enumerate(("loss_diffs", "grad_norm")):
+            for i, (_, y_stat) in enumerate(y_stats.items()):
                 for name, stat, color in zip(names, stats, COLORS):
                     if enable_smoothing and i == 1:
-                        y = _moving_average(np.array(stat[rk]), n=30)
+                        y = _moving_average(np.array(y_stat), n=30)
                         x = stat[ax][29:]
                     else:
                         x = stat[ax]
-                        y = stat[rk]
+                        y = y_stat
                     scatter = go.Scatter(
                         x=x,
                         y=y,

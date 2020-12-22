@@ -4,7 +4,6 @@ from typing import Union, Tuple
 import numpy as np
 from scipy.special import expit
 from sklearn.datasets import load_svmlight_file
-from sklearn.linear_model import LogisticRegression
 from scipy.sparse import spmatrix, hstack, csr_matrix
 
 Matrix = Union[np.ndarray, spmatrix]
@@ -17,17 +16,15 @@ class Oracle:
         self._calls = 0
 
     @property
+    def data(self) -> Tuple[np.ndarray, np.ndarray]:
+        return self._x, self._y
+
+    @property
     def num_calls(self) -> int:
         return self._calls
 
     def reset_calls(self) -> None:
         self._calls = 0
-
-    @functools.lru_cache()
-    def opt(self, tol: float, max_iter: int) -> np.ndarray:
-        cls = LogisticRegression(penalty="none", tol=tol, fit_intercept=False, solver="newton-cg", max_iter=max_iter)
-        cls.fit(self._x, self._y)
-        return cls.coef_[0]
 
     @property
     def dim(self) -> int:
@@ -73,9 +70,13 @@ class Oracle:
     def fuse_value_grad(self, w: np.ndarray) -> Tuple[float, np.ndarray]:
         self._calls += 1
         probs = Oracle._sigmoid(self._x.dot(w))
-        return Oracle._log_loss(probs, self._y), Oracle._log_loss_grad(self._x, probs, self._y)
+        return Oracle._log_loss(probs, self._y), Oracle._log_loss_grad(
+            self._x, probs, self._y
+        )
 
-    def fuse_value_grad_hessian(self, w: np.ndarray) -> Tuple[float, np.ndarray, np.ndarray]:
+    def fuse_value_grad_hessian(
+        self, w: np.ndarray
+    ) -> Tuple[float, np.ndarray, np.ndarray]:
         self._calls += 1
         probs = Oracle._sigmoid(self._x.dot(w))
         return (
@@ -99,7 +100,9 @@ class Oracle:
 
     @staticmethod
     def _log_loss(probs: np.ndarray, y: np.ndarray) -> float:
-        return -np.mean(np.where(y == 1, np.log(probs + 1e-15), np.log(1 - probs + 1e-15)))
+        return -np.mean(
+            np.where(y == 1, np.log(probs + 1e-15), np.log(1 - probs + 1e-15))
+        )
 
     @staticmethod
     def _log_loss_grad(x: Matrix, probs: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -114,7 +117,9 @@ class Oracle:
             return (x.T @ (x * scale)) / x.shape[0]
 
     @staticmethod
-    def _log_loss_hessian_vec_prod(x: Matrix, probs: np.ndarray, d: np.ndarray) -> np.ndarray:
+    def _log_loss_hessian_vec_prod(
+        x: Matrix, probs: np.ndarray, d: np.ndarray
+    ) -> np.ndarray:
         scale = probs * (1 - probs)
         return ((x @ d) * scale) @ x / x.shape[0]
 

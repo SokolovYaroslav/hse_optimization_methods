@@ -19,7 +19,9 @@ class LineSearch(ABC):
         raise NotImplementedError
 
     @staticmethod
-    def get_line_search(name: str, oracle: Oracle, max_iter: int = 500, tol: float = 1.4e-8, **kwargs) -> "LineSearch":
+    def get_line_search(
+        name: str, oracle: Oracle, max_iter: int = 500, tol: float = 1.4e-8, **kwargs
+    ) -> "LineSearch":
         if name == "golden":
             return Golden(oracle, max_iter, tol)
         elif name == "brent":
@@ -36,7 +38,9 @@ class LineSearch(ABC):
     def turn_off_brackets(self) -> None:
         self._off_brackets = True
 
-    def _bracket(self, f: callable, xa: float = 0.0, xb: float = 1.0) -> Tuple[float, float, float]:
+    def _bracket(
+        self, f: callable, xa: float = 0.0, xb: float = 1.0
+    ) -> Tuple[float, float, float]:
         if not self._off_brackets:
             return bracket(f, xa, xb)[:3]
         else:
@@ -82,7 +86,11 @@ class Golden(LineSearch):
 class Brent(LineSearch):
     def __call__(self, w: np.ndarray, direction: np.ndarray) -> float:
         func = self._func(w, direction)
-        return float(brent(func, brack=self._bracket(func), tol=self._tol, maxiter=self._max_iter))
+        return float(
+            brent(
+                func, brack=self._bracket(func), tol=self._tol, maxiter=self._max_iter
+            )
+        )
 
 
 class Armijo(LineSearch):
@@ -107,14 +115,23 @@ class Armijo(LineSearch):
 
 
 class Wolf(LineSearch):
-    def __init__(self, oracle: Oracle, max_iter: int, tol: float, c1: float = 1e-4, c2: float = 0.9):
+    def __init__(
+        self,
+        oracle: Oracle,
+        max_iter: int,
+        tol: float,
+        c1: float = 1e-4,
+        c2: float = 0.9,
+    ):
         super().__init__(oracle, max_iter, tol)
         self._c1 = c1
         self._c2 = c2
         self._armijo = Armijo(oracle, max_iter, tol, c1)
 
     def __call__(self, w: np.ndarray, direction: np.ndarray) -> float:
-        res = line_search(self._f.value, self._f.grad, w, direction, c1=self._c1, c2=self._c2)[0]
+        res = line_search(
+            self._f.value, self._f.grad, w, direction, c1=self._c1, c2=self._c2
+        )[0]
         if res is not None:
             return res
         else:
@@ -122,7 +139,14 @@ class Wolf(LineSearch):
 
 
 class Nesterov(LineSearch):
-    def __init__(self, oracle: Oracle, max_iter: int, tol: float, c1: float = 0.5, c2: float = 0.5):
+    def __init__(
+        self,
+        oracle: Oracle,
+        max_iter: int,
+        tol: float,
+        c1: float = 0.5,
+        c2: float = 0.5,
+    ):
         super().__init__(oracle, max_iter, tol)
         self._c1 = c1
         self._c2 = c2
