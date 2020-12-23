@@ -135,7 +135,7 @@ class Experiment:
     ):
         times = []
         iters = []
-        zero_params = []
+        non_zero_params = []
         stats = []
         for regularization_coeff in tqdm(regularization_coeffs):
             optimizer = get_optimizer(
@@ -152,7 +152,7 @@ class Experiment:
 
             times.append(stat["times"][-1])
             iters.append(stat["iters"][-1])
-            zero_params.append((w_opt == 0.0).sum())
+            non_zero_params.append(w_opt.shape[0] - (w_opt == 0.0).sum())
 
         # time plot
         fig = px.line(
@@ -180,15 +180,15 @@ class Experiment:
         )
         fig.show()
 
-        # zero_params plot
+        # non_zero_params plot
         fig = px.line(
             x=regularization_coeffs,
-            y=zero_params,
+            y=non_zero_params,
             log_x=True,
             title="Num zero params depending on lambda",
         )
         fig.update_layout(
-            yaxis={"title": "Num zero params"},
+            yaxis={"title": "Num of nonzero params"},
             xaxis={"title": r"$\lambda$", "exponentformat": "e"},
         )
         fig.show()

@@ -1,5 +1,5 @@
 import time
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from collections import deque
 from typing import Dict, Tuple, Optional, Deque
 
@@ -127,6 +127,7 @@ class CasualOptimizer(AbstractOptimizer):
     ):
         super().__init__(oracle, start_point, tol, max_iter)
         self._line_search = line_search
+        _ = self._opt_loss
 
     def _optimize(self) -> np.ndarray:
         w = self._start_point
@@ -322,9 +323,10 @@ class LassoOptimizer(AbstractOptimizer):
                 lipschitz *= 2
 
             w, loss, grad = new_w, new_loss, self._oracle.grad(new_w)
+            reg_loss = self._lambda * np.linalg.norm(w, ord=1)
 
             stop_const = ws_diff_norm2 / (alpha ** 2)
-            self._log(loss=loss, lasso_stop=np.log10(stop_const))
+            self._log(loss=loss + reg_loss, lasso_stop=np.log10(stop_const))
             if stop_const <= self._tol:
                 break
 
