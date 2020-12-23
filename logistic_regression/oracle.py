@@ -129,9 +129,7 @@ class Oracle:
 
     @staticmethod
     def _log_loss(probs: np.ndarray, y: np.ndarray) -> float:
-        return -np.mean(
-            np.where(y == 1, np.log(probs + 1e-15), np.log(1 - probs + 1e-15))
-        )
+        return -np.mean(np.log(np.where(y == 1, probs + 1e-15, 1 - probs + 1e-15)))
 
     @staticmethod
     def _log_loss_grad(x: Matrix, probs: np.ndarray, y: np.ndarray) -> np.ndarray:
