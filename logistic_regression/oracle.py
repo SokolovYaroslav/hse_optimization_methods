@@ -1,4 +1,5 @@
 import functools
+import os
 from typing import Union, Tuple
 
 import numpy as np
@@ -11,10 +12,11 @@ Matrix = Union[np.ndarray, spmatrix]
 
 
 class Oracle:
-    def __init__(self, dataset: Matrix, labels: np.ndarray):
+    def __init__(self, dataset: Matrix, labels: np.ndarray, name: str):
         self._x = dataset
         self._y = labels
         self._calls = 0
+        self._name = name
 
     @property
     def num_calls(self) -> int:
@@ -26,6 +28,10 @@ class Oracle:
     @property
     def dim(self) -> int:
         return self._x.shape[1]
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     @staticmethod
     def make_oracle(data_path: str, data_format: str) -> "Oracle":
@@ -42,10 +48,14 @@ class Oracle:
         assert len(classes) == 2
         y = (y == classes[0]).astype(np.int8)
 
-        return Oracle(x, y)
+        name = os.path.splitext(os.path.basename(data_path))[0]
+
+        return Oracle(x, y, name)
 
     @functools.lru_cache()
-    def get_opt_loss(self, regularization: bool, tol: float, max_iter: int, reg_coeff: float = None) -> float:
+    def get_opt_loss(
+        self, regularization: bool, tol: float, max_iter: int, reg_coeff: float = None
+    ) -> float:
         if not regularization:
             cls = LogisticRegression(
                 penalty="none",
@@ -58,9 +68,9 @@ class Oracle:
             cls = LogisticRegression(
                 penalty="l1",
                 tol=tol,
-                C=1/reg_coeff,
+                C=1 / reg_coeff,
                 fit_intercept=False,
-                solver="liblinear",
+                solver="saga",
                 max_iter=max_iter,
             )
         cls.fit(self._x, self._y)

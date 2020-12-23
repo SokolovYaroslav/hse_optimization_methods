@@ -1,5 +1,5 @@
 import time
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from collections import deque
 from typing import Dict, Tuple, Optional, Deque
 
@@ -18,7 +18,7 @@ def get_optimizer(
     max_iter: int = 10000,
     line_search: Optional[LineSearch] = None,
     history_size: Optional[int] = None,
-    regularization_coeff: Optional[float] = None
+    regularization_coeff: Optional[float] = None,
 ) -> "AbstractOptimizer":
     if name != "l-bfgs":
         assert (
@@ -76,14 +76,13 @@ class AbstractOptimizer(ABC):
             "times": [],
             "calls": [],
             "iters": [],
-            "loss_diffs": [],
         }
         self._timer = None
         self._num_iterations = 0
-        self._opt_loss = self._get_opt_loss(oracle, tol, max_iter)
 
+    @property
     @abstractmethod
-    def _get_opt_loss(self, oracle, tol, max_iter) -> float:
+    def _opt_loss(self) -> float:
         raise NotImplementedError
 
     def __call__(self) -> np.ndarray:
@@ -103,17 +102,15 @@ class AbstractOptimizer(ABC):
         self._oracle.reset_calls()
         self._timer = time.time()
 
-    def _log(self, cur_loss: float, **kwargs) -> None:
+    def _log(self, **kwargs) -> None:
         spent_time = time.time() - self._timer
         self._num_iterations += 1
-        loss_diff = abs(cur_loss - self._opt_loss)
 
         self._stats["times"].append(spent_time)
         self._stats["calls"].append(self._oracle.num_calls)
         self._stats["iters"].append(self._num_iterations)
-        self._stats["loss_diffs"].append(np.log10(loss_diff))
 
-        for name, val in kwargs:
+        for name, val in kwargs.items():
             if name not in self._stats:
                 self._stats[name] = []
             self._stats[name].append(val)
@@ -147,7 +144,9 @@ class CasualOptimizer(AbstractOptimizer):
 
             grad_norm = (grad @ grad) / grad_0_norm
             loss_diff = abs(loss - self._opt_loss)
-            self._log(loss_diff, grad_norm=grad_norm)
+            self._log(
+                loss=loss, loss_diff=np.log10(loss_diff), grad_norm=np.log10(grad_norm)
+            )
             if grad_norm <= self._tol:
                 break
         return w
@@ -160,8 +159,11 @@ class CasualOptimizer(AbstractOptimizer):
     def _get_direction(self, grad: np.ndarray) -> np.ndarray:
         raise NotImplemented
 
-    def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
-        return oracle.get_opt_loss(regularization=False, tol=tol, max_iter=max_iter)
+    @property
+    def _opt_loss(self) -> float:
+        return self._oracle.get_opt_loss(
+            regularization=False, tol=self._tol, max_iter=self._max_iter
+        )
 
 
 class GradientDescent(CasualOptimizer):
@@ -319,10 +321,11 @@ class LassoOptimizer(AbstractOptimizer):
                     break
                 lipschitz *= 2
 
-            w, loss = new_w, new_loss
+            w, loss, grad = new_w, new_loss, self._oracle.grad(new_w)
 
-            self._log(loss)
-            if ws_diff_norm2 / (alpha ** 2) <= self._tol:
+            stop_const = ws_diff_norm2 / (alpha ** 2)
+            self._log(loss=loss, lasso_stop=np.log10(stop_const))
+            if stop_const <= self._tol:
                 break
 
             lipschitz /= 2
@@ -330,8 +333,13 @@ class LassoOptimizer(AbstractOptimizer):
         return w
 
     def _proximal_step(self, x: np.ndarray, alpha: float) -> np.ndarray:
-        alpha = self._lambda * alpha
-        return np.sign(x) * np.maximum(np.abs(x) - alpha, 0)
+        return np.sign(x) * np.maximum(np.abs(x) - self._lambda * alpha, 0)
 
-    def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
-        return oracle.get_opt_loss(regularization=True, tol=tol, max_iter=max_iter, reg_coeff=self._lambda)
+    @property
+    def _opt_loss(self) -> float:
+        return self._oracle.get_opt_loss(
+            regularization=True,
+            tol=self._tol,
+            max_iter=self._max_iter,
+            reg_coeff=self._lambda,
+        )
