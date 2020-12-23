@@ -82,7 +82,7 @@ class Oracle(ABC):
         if self._eps is not None:
             return self._eps
         else:
-            return np.sqrt(np.finfo(x.dtype).resolution)
+            return np.sqrt(np.finfo(x.dtype).eps)
 
     @staticmethod
     def calc_error(true: np.ndarray, pred: np.ndarray) -> float:

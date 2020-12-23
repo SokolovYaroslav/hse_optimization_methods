@@ -129,7 +129,8 @@ class Oracle:
 
     @staticmethod
     def _log_loss(probs: np.ndarray, y: np.ndarray) -> float:
-        return -np.mean(np.log(np.where(y == 1, probs + 1e-15, 1 - probs + 1e-15)))
+        eps = np.finfo(probs.dtype).eps
+        return -np.mean(np.log(np.where(y == 1, probs + eps, 1 - probs + eps)))
 
     @staticmethod
     def _log_loss_grad(x: Matrix, probs: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -153,7 +154,7 @@ class Oracle:
 
 def test_oracle(path_to_data: str, data_format: str, seed: int = 42):
     np.random.seed(seed)
-    eps = np.sqrt(np.finfo(np.float64).resolution)
+    eps = np.sqrt(np.finfo(np.float64).eps)
     oracle = Oracle.make_oracle(path_to_data, data_format)
     dim = oracle._x.shape[1]
     w = np.random.randn(dim)
