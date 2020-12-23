@@ -5,6 +5,7 @@ import numpy as np
 from scipy.special import expit
 from sklearn.datasets import load_svmlight_file
 from scipy.sparse import spmatrix, hstack, csr_matrix
+from sklearn.linear_model import LogisticRegression
 
 Matrix = Union[np.ndarray, spmatrix]
 
@@ -14,10 +15,6 @@ class Oracle:
         self._x = dataset
         self._y = labels
         self._calls = 0
-
-    @property
-    def data(self) -> Tuple[np.ndarray, np.ndarray]:
-        return self._x, self._y
 
     @property
     def num_calls(self) -> int:
@@ -46,6 +43,28 @@ class Oracle:
         y = (y == classes[0]).astype(np.int8)
 
         return Oracle(x, y)
+
+    @functools.lru_cache()
+    def get_opt_loss(self, regularization: bool, tol: float, max_iter: int, reg_coeff: float = None) -> float:
+        if not regularization:
+            cls = LogisticRegression(
+                penalty="none",
+                tol=tol,
+                fit_intercept=False,
+                solver="newton-cg",
+                max_iter=max_iter,
+            )
+        else:
+            cls = LogisticRegression(
+                penalty="l1",
+                tol=tol,
+                C=1/reg_coeff,
+                fit_intercept=False,
+                solver="liblinear",
+                max_iter=max_iter,
+            )
+        cls.fit(self._x, self._y)
+        return self.value(cls.coef_[0])
 
     def value(self, w: np.ndarray) -> float:
         self._calls += 1

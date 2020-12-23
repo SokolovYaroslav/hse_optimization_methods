@@ -4,7 +4,6 @@ from collections import deque
 from typing import Dict, Tuple, Optional, Deque
 
 from scipy.linalg import cho_factor, LinAlgError, cho_solve, svd
-from sklearn.linear_model import LogisticRegression
 
 from logistic_regression.line_search import LineSearch
 from logistic_regression.oracle import Oracle
@@ -19,6 +18,7 @@ def get_optimizer(
     max_iter: int = 10000,
     line_search: Optional[LineSearch] = None,
     history_size: Optional[int] = None,
+    regularization_coeff: Optional[float] = None
 ) -> "AbstractOptimizer":
     if name != "l-bfgs":
         assert (
@@ -26,6 +26,7 @@ def get_optimizer(
         ), "history_size is an argument only for l-bfgs optimizer"
     if name != "lasso":
         assert line_search is not None, "you must provide line_search method"
+        assert regularization_coeff is None, "Only Lasso needs regularization_coeff"
 
     if name == "GD":
         return GradientDescent(oracle, line_search, start_point, tol, max_iter)
@@ -48,6 +49,11 @@ def get_optimizer(
         ), f"You must provide a history size, when using l-bfgs"
         line_search.turn_off_brackets()
         return LBFGS(oracle, line_search, start_point, history_size, tol, max_iter)
+
+    elif name == "lasso":
+        assert line_search is None, "Lasso doesn't require line search method"
+        assert regularization_coeff is not None, "You must provide regularization coeff"
+        return LassoOptimizer(oracle, start_point, regularization_coeff, tol, max_iter)
 
     else:
         raise ValueError(f"Unknown optimizer {name}")
@@ -103,7 +109,7 @@ class AbstractOptimizer(ABC):
         loss_diff = abs(cur_loss - self._opt_loss)
 
         self._stats["times"].append(spent_time)
-        self._stats["oracle_calls"].append(self._oracle.num_calls)
+        self._stats["calls"].append(self._oracle.num_calls)
         self._stats["iters"].append(self._num_iterations)
         self._stats["loss_diffs"].append(np.log10(loss_diff))
 
@@ -155,15 +161,7 @@ class CasualOptimizer(AbstractOptimizer):
         raise NotImplemented
 
     def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
-        cls = LogisticRegression(
-            penalty="none",
-            tol=tol,
-            fit_intercept=False,
-            solver="newton-cg",
-            max_iter=max_iter,
-        )
-        cls.fit(*oracle.data)
-        return cls.coef_[0]
+        return oracle.get_opt_loss(regularization=False, tol=tol, max_iter=max_iter)
 
 
 class GradientDescent(CasualOptimizer):
@@ -302,8 +300,8 @@ class LassoOptimizer(AbstractOptimizer):
         max_iter: int = 10000,
     ):
         assert max_iter > 0
-        super().__init__(oracle, start_point, tol, max_iter)
         self._lambda = lambda_
+        super().__init__(oracle, start_point, tol, max_iter)
 
     def _optimize(self) -> np.ndarray:
         w = self._start_point
@@ -336,13 +334,4 @@ class LassoOptimizer(AbstractOptimizer):
         return np.sign(x) * np.maximum(np.abs(x) - alpha, 0)
 
     def _get_opt_loss(self, oracle: Oracle, tol: float, max_iter: int) -> float:
-        cls = LogisticRegression(
-            penalty="l1",
-            C=1 / self._lambda,
-            tol=tol,
-            fit_intercept=False,
-            solver="liblinear",
-            max_iter=max_iter,
-        )
-        cls.fit(*oracle.data)
-        return cls.coef_[0]
+        return oracle.get_opt_loss(regularization=True, tol=tol, max_iter=max_iter, reg_coeff=self._lambda)

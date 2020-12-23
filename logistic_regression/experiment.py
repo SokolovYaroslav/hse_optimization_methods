@@ -43,19 +43,23 @@ class Experiment:
     @staticmethod
     def make_experiment(
         oracle: Oracle,
-        line_search: str,
-        line_search_params: dict,
         optimizer: str,
         start_point: np.ndarray,
         tol: float,
         max_iter: int,
+        line_search: Optional[str] = None,
+        line_search_params: Optional[dict] = None,
         history_size: Optional[int] = None,
+        regularization_coeff: Optional[float] = None,
     ) -> Tuple[np.ndarray, dict]:
-        line_search = LineSearch.get_line_search(
-            line_search, oracle, **line_search_params
-        )
+        if line_search is not None:
+            if line_search_params is None:
+                line_search_params = {}
+            line_search = LineSearch.get_line_search(
+                line_search, oracle, **line_search_params
+            )
         optimizer = get_optimizer(
-            optimizer, oracle, start_point, tol, max_iter, line_search, history_size
+            optimizer, oracle, start_point, tol, max_iter, line_search, history_size, regularization_coeff
         )
         w_opt = optimizer()
         return w_opt, optimizer.stats
@@ -68,7 +72,8 @@ class Experiment:
         enable_smoothing: bool = False,
         dataset_name: str = None,
     ):
-        y_stats = {k: v for k, v in stats if k not in X_STATS}
+        y_stats = set.intersection(*(set(stat.keys()) for stat in stats))
+        y_stats -= X_STATS
 
         for ax in axes:
             fig = make_subplots(
@@ -81,14 +86,14 @@ class Experiment:
             if dataset_name:
                 title += f" on dataset {dataset_name}"
             fig.update_layout(title=title, legend={"orientation": "h"})
-            for i, (_, y_stat) in enumerate(y_stats.items()):
+            for i, y_stat in enumerate(y_stats):
                 for name, stat, color in zip(names, stats, COLORS):
                     if enable_smoothing and i == 1:
-                        y = _moving_average(np.array(y_stat), n=30)
+                        y = _moving_average(np.array(stat[y_stat]), n=30)
                         x = stat[ax][29:]
                     else:
                         x = stat[ax]
-                        y = y_stat
+                        y = stat[y_stat]
                     scatter = go.Scatter(
                         x=x,
                         y=y,
